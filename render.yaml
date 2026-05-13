@@ -1,0 +1,10 @@
+# Render.com: New Web Service → connect this repo, or use Blueprint with this file.
+# After deploy, set environment variables in the Render dashboard (see DEPLOY.txt).
+version: "1"
+services:
+  - type: web
+    name: geoportal-nl-search
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
