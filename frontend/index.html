@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Geoportal — natural language search</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --text: #e8eef5;
+      --muted: #8b9cb3;
+      --accent: #4da3ff;
+      --border: #2d3a4d;
+      --warn: #e8c547;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+      padding: 1.5rem;
+    }
+    main { max-width: 52rem; margin: 0 auto; }
+    h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 0.25rem; }
+    p.sub { color: var(--muted); margin: 0 0 1.25rem; font-size: 0.95rem; }
+    .banner {
+      background: #2a2410;
+      border: 1px solid #5c5120;
+      color: var(--warn);
+      border-radius: 10px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+    form { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    input[type="text"] {
+      flex: 1 1 16rem;
+      padding: 0.65rem 0.85rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      font-size: 1rem;
+    }
+    button {
+      padding: 0.65rem 1.1rem;
+      border-radius: 8px;
+      border: none;
+      background: var(--accent);
+      color: #061018;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.95rem;
+    }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .meta {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+    .meta code { color: #9ed0ff; word-break: break-all; }
+    ul.results { list-style: none; padding: 0; margin: 0; }
+    li.result {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.9rem 1rem;
+      margin-bottom: 0.65rem;
+    }
+    li.result a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    li.result a:hover { text-decoration: underline; }
+    .snippet { color: var(--muted); font-size: 0.88rem; margin-top: 0.35rem; }
+    .err { color: #ff8a8a; white-space: pre-wrap; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Natural language catalog search</h1>
+    <p class="sub">
+      Your question is expanded by an online model (for example Google Gemini free tier), then sent to your ArcGIS Portal
+      <code>/search</code> API. The UI can live on GitHub Pages while the Python API runs elsewhere.
+    </p>
+
+    <div id="banner" class="banner" hidden></div>
+
+    <form id="f">
+      <input type="text" id="q" placeholder="e.g. population or census data for Nebraska" autocomplete="off" />
+      <button type="submit" id="go">Search</button>
+    </form>
+
+    <div id="meta" class="meta" hidden></div>
+    <div id="err" class="err" hidden></div>
+    <ul id="results" class="results"></ul>
+  </main>
+
+  <script>
+    /**
+     * GitHub Pages: the API is on a different host, so set the public API origin here (no trailing slash).
+     * Example: "https://your-app.onrender.com"
+     * You can override per visit with ?api=https://your-api.example.com in the URL.
+     * Leave "" when this HTML is served from the same host as the FastAPI app (e.g. localhost:8000).
+     */
+    const API_BASE = "";
+
+    const $ = (id) => document.getElementById(id);
+
+    function resolveApiBase() {
+      const fromQuery = new URLSearchParams(window.location.search).get("api");
+      const raw = (fromQuery || API_BASE || "").trim().replace(/\/$/, "");
+      return raw;
+    }
+
+    function apiSearchUrl() {
+      const base = resolveApiBase();
+      return base ? base + "/api/search" : "/api/search";
+    }
+
+    (function showConfigHint() {
+      const base = resolveApiBase();
+      const host = window.location.hostname || "";
+      const onGithubPages = host.endsWith("github.io") || host.endsWith("githubusercontent.com");
+      if (onGithubPages && !base) {
+        $("banner").hidden = false;
+        $("banner").textContent =
+          "Set const API_BASE in index.html to your public FastAPI URL (no trailing slash), " +
+          "or open this page with ?api=https://your-api.example.com . " +
+          "Your API must allow this origin in CORS_ORIGINS.";
+      }
+    })();
+
+    $("f").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const query = $("q").value.trim();
+      $("err").hidden = true;
+      $("results").innerHTML = "";
+      $("meta").hidden = true;
+      if (!query) return;
+
+      const go = $("go");
+      go.disabled = true;
+      try {
+        const r = await fetch(apiSearchUrl(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query, num: 20, start: 1 }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const msg = data.detail
+            ? Array.isArray(data.detail)
+              ? data.detail.map((d) => d.msg).join("; ")
+              : String(data.detail)
+            : r.statusText;
+          throw new Error(msg);
+        }
+
+        const exp = data.expanded || {};
+        const note = exp.user_note || "";
+        const pq = data.portal_q_used || "";
+        $("meta").innerHTML =
+          "<strong>Portal query used:</strong> <code>" +
+          escapeHtml(pq) +
+          "</code>" +
+          (note ? "<br><strong>Note:</strong> " + escapeHtml(note) : "");
+        $("meta").hidden = false;
+
+        const pr = data.portal_response || {};
+        const results = pr.results || [];
+        const linkPrefix = data.item_html_id_prefix || "";
+
+        if (!results.length) {
+          $("results").innerHTML = "<li class=\"result\">No items returned.</li>";
+          return;
+        }
+
+        for (const it of results) {
+          const id = it.id;
+          const title = it.title || id;
+          const link = linkPrefix ? linkPrefix + encodeURIComponent(id) : "#";
+          const li = document.createElement("li");
+          li.className = "result";
+          li.innerHTML =
+            "<a href=\"" +
+            escapeHtml(link) +
+            "\" target=\"_blank\" rel=\"noopener\">" +
+            escapeHtml(title) +
+            "</a>" +
+            "<div class=\"snippet\">" +
+            escapeHtml(it.snippet || it.type || "") +
+            "</div>";
+          $("results").appendChild(li);
+        }
+      } catch (err) {
+        $("err").textContent = String(err.message || err);
+        $("err").hidden = false;
+      } finally {
+        go.disabled = false;
+      }
+    });
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;");
+    }
+  </script>
+</body>
+</html>
