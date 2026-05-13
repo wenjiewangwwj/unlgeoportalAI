@@ -6,6 +6,9 @@ class Settings(BaseSettings):
 
     portal_sharing_rest: str
     portal_token: str = ""
+    # If set, all Portal /search queries are scoped to this group (ArcGIS q filter: group:<id>).
+    # Leave empty to search the whole portal catalog.
+    portal_group_id: str = "cdfaf0b822344c7792b688998094b1f0"
 
     # auto = try Gemini if key set, else Hugging Face router, else plain Portal search (no LLM).
     # none = never call an LLM. gemini | huggingface | ollama | openai_compatible = force that path (with fallback where noted).

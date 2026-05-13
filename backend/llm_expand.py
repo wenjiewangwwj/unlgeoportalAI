@@ -66,11 +66,53 @@ async def _try_llm_json(llm_mode: str, fetch_text: Callable[[], Awaitable[str]])
         return None
 
 
-async def expand_query_natural_language(user_text: str) -> dict[str, Any]:
+async def expand_query_natural_language(
+    user_text: str,
+    *,
+    user_openai_api_key: str = "",
+    user_openai_base_url: str = "",
+    user_openai_model: str = "",
+    user_anthropic_api_key: str = "",
+    user_anthropic_model: str = "",
+) -> dict[str, Any]:
+    """BYOK (OpenAI / Anthropic) takes priority over server-side LLM settings."""
     user_text = user_text.strip()
     if not user_text:
         return _passthrough("", "", "none")
 
+    okey = user_openai_api_key.strip()
+    obase = (user_openai_base_url or "https://api.openai.com/v1").strip().rstrip("/")
+    omodel = (user_openai_model or "gpt-4o-mini").strip()
+    akey = user_anthropic_api_key.strip()
+    amodel = (user_anthropic_model or "claude-3-5-haiku-20241022").strip()
+
+    if okey:
+        out = await _try_llm_json(
+            "openai_byok",
+            lambda: _openai_bearer_chat(user_text, okey, obase, omodel),
+        )
+        if out:
+            return out
+
+    if akey:
+        out = await _try_llm_json(
+            "anthropic_byok",
+            lambda: _anthropic_messages_chat(user_text, akey, amodel),
+        )
+        if out:
+            return out
+
+    if okey or akey:
+        return _passthrough(
+            user_text,
+            "Bring-your-own-key request failed or returned invalid JSON; searching with your text as-is.",
+            "none",
+        )
+
+    return await _expand_from_server_env(user_text)
+
+
+async def _expand_from_server_env(user_text: str) -> dict[str, Any]:
     prov = settings.llm_provider.lower().strip()
 
     if prov in ("none", "off", "disabled"):
@@ -86,8 +128,7 @@ async def expand_query_natural_language(user_text: str) -> dict[str, Any]:
             return out
         return _passthrough(
             user_text,
-            "No LLM expansion: add a free Gemini key (GEMINI_API_KEY) and/or a free Hugging Face token "
-            "(HUGGINGFACE_API_KEY from https://huggingface.co/settings/tokens ). Searching with your text as-is.",
+            "No server LLM: add GEMINI_API_KEY and/or HUGGINGFACE_API_KEY on the host, or use 'Bring your own key' in the UI.",
             "none",
         )
 
@@ -109,7 +150,7 @@ async def expand_query_natural_language(user_text: str) -> dict[str, Any]:
         out = await _try_llm_json("huggingface", lambda: _huggingface_chat(user_text))
         return out or _passthrough(
             user_text,
-            "Hugging Face chat failed or needs a free token (HUGGINGFACE_API_KEY). Searching with your text as-is.",
+            "Hugging Face chat failed or needs HUGGINGFACE_API_KEY. Searching with your text as-is.",
             "none",
         )
 
@@ -125,7 +166,7 @@ async def expand_query_natural_language(user_text: str) -> dict[str, Any]:
         if not settings.openai_compat_base_url or not settings.openai_compat_api_key:
             return _passthrough(
                 user_text,
-                "OpenAI-compatible API not fully configured; searching with your text as-is.",
+                "OpenAI-compatible API not fully configured on server; searching with your text as-is.",
                 "none",
             )
         out = await _try_llm_json("openai_compatible", lambda: _openai_compatible_chat(user_text))
@@ -140,6 +181,71 @@ async def expand_query_natural_language(user_text: str) -> dict[str, Any]:
         f"Unknown LLM_PROVIDER={settings.llm_provider!r}; searching with your text as-is.",
         "none",
     )
+
+
+async def _openai_bearer_chat(user_text: str, api_key: str, base_url: str, model: str) -> str:
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_text},
+        ],
+        "temperature": 0.2,
+    }
+    if any(x in model.lower() for x in ("gpt-4o", "gpt-3.5-turbo", "gpt-4-turbo", "o1", "o3")):
+        payload["response_format"] = {"type": "json_object"}
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(url, headers=headers, json=payload)
+        if r.status_code >= 400:
+            try:
+                err = r.json()
+            except Exception:
+                err = {"raw": r.text[:500]}
+            raise ValueError(f"OpenAI HTTP {r.status_code}: {err}")
+        body = r.json()
+
+    choices = body.get("choices") or []
+    if not choices:
+        raise ValueError(f"OpenAI returned no choices: {body}")
+    msg = choices[0].get("message") or {}
+    return str(msg.get("content") or "").strip()
+
+
+async def _anthropic_messages_chat(user_text: str, api_key: str, model: str) -> str:
+    url = "https://api.anthropic.com/v1/messages"
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    body = {
+        "model": model,
+        "max_tokens": 1024,
+        "system": SYSTEM_PROMPT,
+        "messages": [{"role": "user", "content": user_text}],
+        "temperature": 0.2,
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(url, headers=headers, json=body)
+        if r.status_code >= 400:
+            try:
+                err = r.json()
+            except Exception:
+                err = {"raw": r.text[:500]}
+            raise ValueError(f"Anthropic HTTP {r.status_code}: {err}")
+        data = r.json()
+
+    parts = data.get("content") or []
+    texts: list[str] = []
+    for p in parts:
+        if isinstance(p, dict) and p.get("type") == "text":
+            t = p.get("text")
+            if t:
+                texts.append(str(t))
+    return "\n".join(texts).strip()
 
 
 async def _ollama_chat(user_text: str) -> str:
@@ -189,9 +295,9 @@ async def _gemini_chat(user_text: str) -> str:
     candidates = data.get("candidates") or []
     if not candidates:
         raise ValueError(f"Gemini returned no candidates: {data}")
-    parts = (candidates[0].get("content") or {}).get("parts") or []
+    cparts = (candidates[0].get("content") or {}).get("parts") or []
     texts: list[str] = []
-    for p in parts:
+    for p in cparts:
         t = p.get("text")
         if t:
             texts.append(str(t))
@@ -199,7 +305,6 @@ async def _gemini_chat(user_text: str) -> str:
 
 
 async def _huggingface_chat(user_text: str) -> str:
-    """OpenAI-compatible chat on Hugging Face Router (optional HF token)."""
     base = settings.huggingface_router_url.rstrip("/")
     url = f"{base}/chat/completions"
     headers: dict[str, str] = {"Content-Type": "application/json"}
