@@ -1,40 +1,67 @@
-CAN GITHUB HOST THE PYTHON API?
-  No. GitHub Pages only serves static files (HTML/CSS/JS). It cannot run
-  uvicorn/FastAPI. Your API must run on a "Python web host" (Render, Railway,
-  Azure, a VM, etc.). You still use GitHub to STORE the code.
+RENDER: STATIC SITE OR WEB SERVICE?
+  Choose **Web Service** (not Static Site).
 
-CAN THE HTML LIVE ON GITHUB AND WORK?
-  Yes, if the HTML calls your API by full URL (API_BASE in index.html or ?api=).
-  You must also set CORS_ORIGINS on the API to include your GitHub Pages origin,
-  e.g. https://yourname.github.io
+  - **Web Service** runs Python (uvicorn + FastAPI). This is your API
+    (/health, /api/search). Render gives you HTTPS automatically.
+  - **Static Site** is only for HTML/CSS/JS with no server code. It cannot
+    run your Python app or call Gemini/Portal from a secret server key the
+    same way a Web Service does.
 
-OPTION A — RENDER.COM (FREE TIER, HTTPS)
-  1. Push this repo to GitHub.
-  2. Sign up at https://render.com and connect GitHub.
-  3. New → Web Service → pick the repo.
-  4. Render can read render.yaml; or set manually:
-       Build:  pip install -r requirements.txt
-       Start:  uvicorn backend.main:app --host 0.0.0.0 --port $PORT
-  5. In Render → Environment, add (examples):
+HOW TO DEPLOY ON RENDER (WEB SERVICE)
+  1. Go to https://dashboard.render.com and sign in (GitHub login is fine).
+  2. **New +** → **Web Service**.
+  3. **Connect** your GitHub account if asked, then select repo:
+     https://github.com/wenjiewangwwj/unlgeoportalAI
+  4. Render may detect **render.yaml** (Blueprint). If it offers to use it,
+     accept so build/start commands are filled in.
+  5. If you create the service manually instead:
+       Root directory: (leave blank unless your app is in a subfolder)
+       Build command:  pip install -r requirements.txt
+       Start command:  see "START COMMAND" below — must match your folder layout.
+  6. **Environment** (Render dashboard → Environment):
        PORTAL_SHARING_REST=https://geoportal.nead.nebraska.edu/portal/sharing/rest
        LLM_PROVIDER=gemini
        GEMINI_API_KEY=(from https://aistudio.google.com/apikey )
        GEMINI_MODEL=gemini-2.0-flash
-       CORS_ORIGINS=https://YOURNAME.github.io,http://127.0.0.1:5500
-     Copy any other variables from env.example as needed.
-  6. Deploy. Copy the service URL, e.g. https://geoportal-nl-search.onrender.com
+       CORS_ORIGINS=https://wenjiewangwwj.github.io,http://127.0.0.1:5500
+     Add PORTAL_TOKEN only if you need private items. Use your real GitHub
+     Pages origin (project site is often https://USER.github.io/REPO — CORS
+     uses origin without path, e.g. https://USER.github.io for user sites).
+  7. Create Web Service and wait for the deploy log. Open the URL Render shows
+     and test: https://YOUR-SERVICE.onrender.com/health
 
-GITHUB PAGES FOR THE UI
-  1. Repo → Settings → Pages → Build from branch.
-  2. Use "main" + "/docs" OR "/ (root)" — GitHub only allows those folders for
-     Pages from a branch. This project keeps the page in frontend/index.html.
-     Easiest: copy frontend/index.html to docs/index.html (create docs/), commit,
-     set Pages source to /docs on main.
-  3. In docs/index.html (or wherever you publish), set:
-       const API_BASE = "https://YOUR-SERVICE.onrender.com";
-  4. Wait for Pages URL (https://YOURNAME.github.io/REPO/) and add that exact
-     origin to CORS_ORIGINS on Render, then redeploy or restart the service.
+GITHUB PAGES (OPTIONAL UI)
+  Same as before: publish index.html from root or /docs, set API_BASE to your
+  Render URL, and put that Pages origin in CORS_ORIGINS.
+
+--- START COMMAND (must match repo layout) ---
+
+  Layout A — **backend/** package (recommended; matches this template repo):
+    Start: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    Repo must contain folder **backend/** with main.py, config.py, etc.
+
+  Layout B — all Python files at **repo root** (no backend/ folder):
+    Start: uvicorn main:app --host 0.0.0.0 --port $PORT
+    Every file must use imports like **from config import settings**, not
+    **from backend.config**. Your render.yaml must use **main:app**, not
+    **backend.main:app**.
+
+IMPORTANT FOR https://github.com/wenjiewangwwj/unlgeoportalAI
+  That repo currently lists Python files at the **root** but the code still
+  imports **backend** (and render.yaml may say **backend.main:app**). That
+  combination will fail on Render with **ModuleNotFoundError: backend**.
+
+  Fix one of these ways:
+    (1) Add a real **backend/** directory: move main.py, config.py,
+        llm_expand.py, portal_search.py into **backend/**, add **backend/__init__.py**,
+        keep **index.html** at repo root or under **frontend/**, and in
+        **backend/main.py** point the UI path to the folder that contains
+        index.html (often parent.parent / "index.html" if index is at repo root).
+    OR
+    (2) Stay flat at root: change all imports from **backend.X** to **X**,
+        set start command to **uvicorn main:app**, and fix **render.yaml**
+        startCommand the same way.
 
 NOTES
-  - Free Render apps may "spin down" after idle; first request can be slow.
-  - Never commit .env or API keys; set secrets only in Render / host dashboard.
+  - Free Render apps may spin down when idle; first request can be slow.
+  - Never commit API keys; set GEMINI_API_KEY only in Render Environment.
