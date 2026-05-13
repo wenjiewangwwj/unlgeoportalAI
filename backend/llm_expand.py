@@ -1,5 +1,6 @@
 import json
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -25,29 +26,120 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     return json.loads(m.group())
 
 
-async def expand_query_natural_language(user_text: str) -> dict[str, Any]:
-    user_text = user_text.strip()
-    if not user_text:
-        return {"portal_q": "", "tags": [], "user_note": ""}
+def _passthrough(user_text: str, user_note: str, llm_mode: str = "none") -> dict[str, Any]:
+    return {
+        "portal_q": user_text,
+        "tags": [],
+        "user_note": user_note,
+        "llm_used": False,
+        "llm_mode": llm_mode,
+    }
 
-    provider = settings.llm_provider.lower().strip()
-    if provider == "gemini":
-        raw = await _gemini_chat(user_text)
-    elif provider == "ollama":
-        raw = await _ollama_chat(user_text)
-    elif provider == "openai_compatible":
-        raw = await _openai_compatible_chat(user_text)
-    else:
-        raise ValueError(f"Unknown LLM_PROVIDER: {settings.llm_provider}")
 
-    data = _parse_json_object(raw)
+def _normalize_llm_payload(data: dict[str, Any], llm_mode: str) -> dict[str, Any]:
     portal_q = str(data.get("portal_q", "")).strip()
     tags = data.get("tags") or []
     if not isinstance(tags, list):
         tags = []
     tags = [str(t).strip() for t in tags if str(t).strip()][:5]
     user_note = str(data.get("user_note", "")).strip()
-    return {"portal_q": portal_q, "tags": tags, "user_note": user_note}
+    return {
+        "portal_q": portal_q,
+        "tags": tags,
+        "user_note": user_note,
+        "llm_used": True,
+        "llm_mode": llm_mode,
+    }
+
+
+async def _try_llm_json(llm_mode: str, fetch_text: Callable[[], Awaitable[str]]) -> dict[str, Any] | None:
+    try:
+        raw = (await fetch_text()).strip()
+        if not raw:
+            return None
+        data = _parse_json_object(raw)
+        out = _normalize_llm_payload(data, llm_mode)
+        if not out["portal_q"] and not out["tags"]:
+            return None
+        return out
+    except Exception:
+        return None
+
+
+async def expand_query_natural_language(user_text: str) -> dict[str, Any]:
+    user_text = user_text.strip()
+    if not user_text:
+        return _passthrough("", "", "none")
+
+    prov = settings.llm_provider.lower().strip()
+
+    if prov in ("none", "off", "disabled"):
+        return _passthrough(user_text, "LLM disabled (LLM_PROVIDER=none). Portal search uses your words as-is.", "none")
+
+    if prov == "auto":
+        if settings.gemini_api_key.strip():
+            out = await _try_llm_json("gemini", lambda: _gemini_chat(user_text))
+            if out:
+                return out
+        out = await _try_llm_json("huggingface", lambda: _huggingface_chat(user_text))
+        if out:
+            return out
+        return _passthrough(
+            user_text,
+            "No LLM expansion: add a free Gemini key (GEMINI_API_KEY) and/or a free Hugging Face token "
+            "(HUGGINGFACE_API_KEY from https://huggingface.co/settings/tokens ). Searching with your text as-is.",
+            "none",
+        )
+
+    if prov == "gemini":
+        if not settings.gemini_api_key.strip():
+            return _passthrough(
+                user_text,
+                "No GEMINI_API_KEY set; skipping Gemini. Searching with your text as-is.",
+                "none",
+            )
+        out = await _try_llm_json("gemini", lambda: _gemini_chat(user_text))
+        return out or _passthrough(
+            user_text,
+            "Gemini failed or returned invalid JSON; searching with your text as-is.",
+            "none",
+        )
+
+    if prov in ("huggingface", "hf"):
+        out = await _try_llm_json("huggingface", lambda: _huggingface_chat(user_text))
+        return out or _passthrough(
+            user_text,
+            "Hugging Face chat failed or needs a free token (HUGGINGFACE_API_KEY). Searching with your text as-is.",
+            "none",
+        )
+
+    if prov == "ollama":
+        out = await _try_llm_json("ollama", lambda: _ollama_chat(user_text))
+        return out or _passthrough(
+            user_text,
+            "Ollama unavailable or invalid response; searching with your text as-is.",
+            "none",
+        )
+
+    if prov == "openai_compatible":
+        if not settings.openai_compat_base_url or not settings.openai_compat_api_key:
+            return _passthrough(
+                user_text,
+                "OpenAI-compatible API not fully configured; searching with your text as-is.",
+                "none",
+            )
+        out = await _try_llm_json("openai_compatible", lambda: _openai_compatible_chat(user_text))
+        return out or _passthrough(
+            user_text,
+            "OpenAI-compatible LLM failed; searching with your text as-is.",
+            "none",
+        )
+
+    return _passthrough(
+        user_text,
+        f"Unknown LLM_PROVIDER={settings.llm_provider!r}; searching with your text as-is.",
+        "none",
+    )
 
 
 async def _ollama_chat(user_text: str) -> str:
@@ -72,7 +164,7 @@ async def _ollama_chat(user_text: str) -> str:
 async def _gemini_chat(user_text: str) -> str:
     key = settings.gemini_api_key.strip()
     if not key:
-        raise ValueError("GEMINI_API_KEY must be set (get a free key at https://aistudio.google.com/apikey )")
+        raise ValueError("GEMINI_API_KEY empty")
 
     model = (settings.gemini_model or "gemini-2.0-flash").strip()
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -104,6 +196,42 @@ async def _gemini_chat(user_text: str) -> str:
         if t:
             texts.append(str(t))
     return "\n".join(texts).strip()
+
+
+async def _huggingface_chat(user_text: str) -> str:
+    """OpenAI-compatible chat on Hugging Face Router (optional HF token)."""
+    base = settings.huggingface_router_url.rstrip("/")
+    url = f"{base}/chat/completions"
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    tok = settings.huggingface_api_key.strip()
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+
+    model = (settings.huggingface_model or "meta-llama/Llama-3.2-1B-Instruct").strip()
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_text},
+        ],
+        "temperature": 0.2,
+        "max_tokens": 512,
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(url, headers=headers, json=payload)
+        if r.status_code >= 400:
+            try:
+                err = r.json()
+            except Exception:
+                err = {"raw": r.text[:500]}
+            raise ValueError(f"Hugging Face HTTP {r.status_code}: {err}")
+        body = r.json()
+
+    choices = body.get("choices") or []
+    if not choices:
+        raise ValueError(f"Hugging Face returned no choices: {body}")
+    msg = choices[0].get("message") or {}
+    return str(msg.get("content") or "").strip()
 
 
 async def _openai_compatible_chat(user_text: str) -> str:

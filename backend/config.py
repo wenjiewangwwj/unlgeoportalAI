@@ -7,10 +7,15 @@ class Settings(BaseSettings):
     portal_sharing_rest: str
     portal_token: str = ""
 
-    # gemini = Google AI Studio (free tier API key) | openai_compatible = Groq, etc. | ollama = local
-    llm_provider: str = "gemini"
+    # auto = try Gemini if key set, else Hugging Face router, else plain Portal search (no LLM).
+    # none = never call an LLM. gemini | huggingface | ollama | openai_compatible = force that path (with fallback where noted).
+    llm_provider: str = "auto"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
+
+    huggingface_api_key: str = ""
+    huggingface_model: str = "meta-llama/Llama-3.2-1B-Instruct"
+    huggingface_router_url: str = "https://router.huggingface.co/v1"
 
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "llama3.2"

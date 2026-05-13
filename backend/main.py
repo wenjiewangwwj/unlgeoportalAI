@@ -48,20 +48,19 @@ class SearchRequest(BaseModel):
 @app.get("/health")
 async def health():
     prov = settings.llm_provider.lower().strip()
-    extra: dict = {"llm_provider": settings.llm_provider}
-    if prov == "gemini":
-        extra["gemini_key_configured"] = bool(settings.gemini_api_key.strip())
-    elif prov == "openai_compatible":
+    extra: dict = {
+        "llm_provider": settings.llm_provider,
+        "gemini_key_configured": bool(settings.gemini_api_key.strip()),
+        "huggingface_token_configured": bool(settings.huggingface_api_key.strip()),
+    }
+    if prov == "openai_compatible":
         extra["openai_compat_key_configured"] = bool(settings.openai_compat_api_key.strip())
     return {"ok": True, "portal": settings.sharing_rest, **extra}
 
 
 @app.post("/api/search")
 async def api_search(body: SearchRequest):
-    try:
-        expanded = await expand_query_natural_language(body.query)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"LLM error: {e!s}") from e
+    expanded = await expand_query_natural_language(body.query)
 
     portal_q = merge_tags_into_q(expanded.get("portal_q") or "", expanded.get("tags") or [])
     if not portal_q:
