@@ -3,118 +3,407 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Geoportal — natural language search</title>
+  <title>UNL Geoportal — AI-assisted search</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:ital,opsz,wght@0,9..144,600;0,9..144,700;1,9..144,600&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg: #0f1419;
-      --card: #1a2332;
-      --text: #e8eef5;
-      --muted: #8b9cb3;
-      --accent: #4da3ff;
-      --border: #2d3a4d;
-      --warn: #e8c547;
+      --bg0: #070a12;
+      --bg1: #0d1324;
+      --card: rgba(22, 32, 52, 0.72);
+      --card-edge: rgba(120, 170, 255, 0.18);
+      --text: #eef3ff;
+      --muted: #94a3c8;
+      --accent: #5eb8ff;
+      --accent2: #7c5cff;
+      --ok: #5ee0a0;
+      --warn: #f0c14d;
+      --danger: #ff7a7a;
+      --radius: 16px;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
     }
     * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
     body {
       margin: 0;
-      font-family: "Segoe UI", system-ui, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.5;
       min-height: 100vh;
-      padding: 1.5rem;
+      font-family: "DM Sans", system-ui, sans-serif;
+      color: var(--text);
+      background: var(--bg0);
+      line-height: 1.55;
     }
-    main { max-width: 52rem; margin: 0 auto; }
-    h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 0.25rem; }
-    p.sub { color: var(--muted); margin: 0 0 1.25rem; font-size: 0.95rem; }
-    .banner {
-      background: #2a2410;
-      border: 1px solid #5c5120;
-      color: var(--warn);
-      border-radius: 10px;
-      padding: 0.75rem 1rem;
-      margin-bottom: 1rem;
-      font-size: 0.9rem;
+    .bg {
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      background:
+        radial-gradient(ellipse 100% 80% at 10% -10%, rgba(94, 184, 255, 0.22), transparent 55%),
+        radial-gradient(ellipse 80% 60% at 95% 10%, rgba(124, 92, 255, 0.2), transparent 50%),
+        radial-gradient(ellipse 70% 50% at 50% 100%, rgba(94, 224, 160, 0.08), transparent 45%),
+        linear-gradient(180deg, var(--bg0), var(--bg1) 40%, #0a0e18);
     }
-    form { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
-    input[type="text"] {
-      flex: 1 1 16rem;
-      padding: 0.65rem 0.85rem;
-      border-radius: 8px;
-      border: 1px solid var(--border);
+    .noise {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      opacity: 0.04;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+    .wrap {
+      max-width: 52rem;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+    header.hero {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+    .eyebrow svg { opacity: 0.9; }
+    h1 {
+      font-family: "Fraunces", Georgia, serif;
+      font-size: clamp(1.75rem, 4vw, 2.35rem);
+      font-weight: 700;
+      line-height: 1.15;
+      margin: 0 0 0.75rem;
+      background: linear-gradient(120deg, #fff 0%, #b8d7ff 45%, #c4b5ff 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .lead {
+      color: var(--muted);
+      font-size: 1.05rem;
+      max-width: 38rem;
+      margin: 0 auto;
+    }
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      justify-content: center;
+      margin-top: 1.25rem;
+    }
+    .pill {
+      font-size: 0.8rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--muted);
+    }
+    .pill strong { color: var(--text); font-weight: 600; }
+    .card {
       background: var(--card);
+      border: 1px solid var(--card-edge);
+      border-radius: var(--radius);
+      padding: 1.35rem 1.35rem 1.25rem;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+    }
+    .card h2 {
+      margin: 0 0 0.35rem;
+      font-size: 1.05rem;
+      font-weight: 600;
+    }
+    .hint { font-size: 0.85rem; color: var(--muted); margin: 0 0 1rem; }
+    form#f {
+      display: flex;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      align-items: stretch;
+    }
+    .input-wrap {
+      flex: 1 1 16rem;
+      position: relative;
+    }
+    .input-wrap svg {
+      position: absolute;
+      left: 0.85rem;
+      top: 50%;
+      transform: translateY(-50%);
+      opacity: 0.45;
+      pointer-events: none;
+    }
+    input[type="text"]#q {
+      width: 100%;
+      padding: 0.85rem 1rem 0.85rem 2.65rem;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(6, 10, 20, 0.55);
       color: var(--text);
       font-size: 1rem;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
-    button {
-      padding: 0.65rem 1.1rem;
-      border-radius: 8px;
+    input[type="text"]#q:focus {
+      border-color: rgba(94, 184, 255, 0.55);
+      box-shadow: 0 0 0 3px rgba(94, 184, 255, 0.12);
+    }
+    button#go {
+      padding: 0.85rem 1.35rem;
+      border-radius: 12px;
       border: none;
-      background: var(--accent);
-      color: #061018;
-      font-weight: 600;
-      cursor: pointer;
+      font-weight: 700;
       font-size: 0.95rem;
+      cursor: pointer;
+      color: #041018;
+      background: linear-gradient(135deg, var(--accent), #3d9fff);
+      box-shadow: 0 8px 28px rgba(62, 160, 255, 0.35);
+      transition: transform 0.12s, filter 0.12s;
     }
-    button:disabled { opacity: 0.55; cursor: not-allowed; }
-    .meta {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 0.85rem 1rem;
-      margin-bottom: 1rem;
+    button#go:hover:not(:disabled) {
+      filter: brightness(1.06);
+      transform: translateY(-1px);
+    }
+    button#go:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    details.byok {
+      margin-top: 1.15rem;
+      border-radius: 12px;
+      border: 1px dashed rgba(255, 255, 255, 0.14);
+      background: rgba(0, 0, 0, 0.2);
+      overflow: hidden;
+    }
+    details.byok summary {
+      cursor: pointer;
+      padding: 0.75rem 1rem;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--muted);
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    details.byok summary::-webkit-details-marker { display: none; }
+    details.byok[open] summary { color: var(--text); border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+    .byok-body { padding: 1rem; display: grid; gap: 1rem; }
+    .byok-grid {
+      display: grid;
+      gap: 0.75rem;
+      grid-template-columns: 1fr;
+    }
+    @media (min-width: 640px) {
+      .byok-grid { grid-template-columns: 1fr 1fr; }
+    }
+    .field label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+    .field input {
+      width: 100%;
+      padding: 0.55rem 0.7rem;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(6, 10, 20, 0.65);
+      color: var(--text);
       font-size: 0.9rem;
     }
-    .meta code { color: #9ed0ff; word-break: break-all; }
-    ul.results { list-style: none; padding: 0; margin: 0; }
-    li.result {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 0.9rem 1rem;
-      margin-bottom: 0.65rem;
+    .field small { display: block; margin-top: 0.35rem; font-size: 0.75rem; color: var(--muted); opacity: 0.9; }
+    .banner {
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      border-radius: 12px;
+      background: rgba(240, 193, 77, 0.12);
+      border: 1px solid rgba(240, 193, 77, 0.35);
+      color: #ffe6a8;
+      font-size: 0.88rem;
     }
-    li.result a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    .meta {
+      margin-top: 1.25rem;
+      padding: 1rem 1.1rem;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 0.88rem;
+      color: var(--muted);
+    }
+    .meta strong { color: var(--text); }
+    .meta code {
+      color: #9ed0ff;
+      word-break: break-all;
+      font-size: 0.82em;
+    }
+    .err {
+      margin-top: 1rem;
+      padding: 0.85rem 1rem;
+      border-radius: 12px;
+      background: rgba(255, 90, 90, 0.1);
+      border: 1px solid rgba(255, 122, 122, 0.35);
+      color: #ffc9c9;
+      font-size: 0.88rem;
+      white-space: pre-wrap;
+    }
+    .results-head {
+      margin: 2rem 0 0.75rem;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .results-head h2 {
+      margin: 0;
+      font-family: "Fraunces", Georgia, serif;
+      font-size: 1.2rem;
+      font-weight: 600;
+    }
+    ul.results {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+    li.result {
+      border-radius: 14px;
+      padding: 1rem 1.1rem;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+      transition: border-color 0.15s, transform 0.12s;
+    }
+    li.result:hover {
+      border-color: rgba(94, 184, 255, 0.35);
+      transform: translateY(-1px);
+    }
+    li.result a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 1.02rem;
+    }
     li.result a:hover { text-decoration: underline; }
-    .snippet { color: var(--muted); font-size: 0.88rem; margin-top: 0.35rem; }
-    .err { color: #ff8a8a; white-space: pre-wrap; font-size: 0.9rem; }
+    .snippet { color: var(--muted); font-size: 0.86rem; margin-top: 0.4rem; line-height: 1.45; }
+    footer.site-ft {
+      margin-top: 3rem;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    footer.site-ft a { color: var(--accent); text-decoration: none; }
+    footer.site-ft a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Natural language catalog search</h1>
-    <p class="sub">
-      Your question is expanded by an online model (for example Google Gemini free tier), then sent to your ArcGIS Portal
-      <code>/search</code> API. The UI can live on GitHub Pages while the Python API runs elsewhere.
-    </p>
+  <div class="bg" aria-hidden="true"></div>
+  <div class="noise" aria-hidden="true"></div>
 
-    <div id="banner" class="banner" hidden></div>
+  <div class="wrap">
+    <header class="hero">
+      <div class="eyebrow">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+        Nebraska · ArcGIS Portal
+      </div>
+      <h1>Discover geospatial data, in your own words</h1>
+      <p class="lead">
+        Search the catalog with natural language. Results are scoped to the configured Portal group when the API is set up that way.
+        Optional AI rewrites your question into stronger keywords before hitting Portal <code style="color:#9ed0ff">/search</code>.
+      </p>
+      <div class="pill-row">
+        <span class="pill"><strong>Group-scoped</strong> catalog</span>
+        <span class="pill"><strong>BYOK</strong> OpenAI / Claude</span>
+        <span class="pill"><strong>Works</strong> without any API keys</span>
+      </div>
+    </header>
 
-    <form id="f">
-      <input type="text" id="q" placeholder="e.g. population or census data for Nebraska" autocomplete="off" />
-      <button type="submit" id="go">Search</button>
-    </form>
+    <section class="card" aria-labelledby="search-title">
+      <h2 id="search-title">Search</h2>
+      <p class="hint">Try &ldquo;population&rdquo;, &ldquo;census tracts&rdquo;, &ldquo;Nebraska water&rdquo;, or any phrase you would use with a colleague.</p>
 
-    <div id="meta" class="meta" hidden></div>
-    <div id="err" class="err" hidden></div>
+      <div id="banner" class="banner" hidden></div>
+
+      <form id="f">
+        <div class="input-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+          </svg>
+          <input type="text" id="q" placeholder="What data are you looking for?" autocomplete="off" />
+        </div>
+        <button type="submit" id="go">Search</button>
+      </form>
+
+      <details class="byok">
+        <summary>
+          <span style="font-size:1.1rem">&#9881;</span>
+          Bring your own model (optional OpenAI / Claude)
+        </summary>
+        <div class="byok-body">
+          <p style="margin:0;font-size:0.85rem;color:var(--muted);">
+            Keys are sent to this app&apos;s backend over HTTPS for that search only. Use keys you are comfortable sharing with whoever runs the server, or leave blank to use the host&apos;s configured models / plain search.
+          </p>
+          <div class="byok-grid">
+            <div class="field">
+              <label for="openaiKey">OpenAI API key</label>
+              <input type="password" id="openaiKey" autocomplete="off" placeholder="sk-..." />
+              <small>Default base <code>https://api.openai.com/v1</code>, model <code>gpt-4o-mini</code>. Override below if needed.</small>
+            </div>
+            <div class="field">
+              <label for="anthropicKey">Anthropic (Claude) API key</label>
+              <input type="password" id="anthropicKey" autocomplete="off" placeholder="sk-ant-..." />
+              <small>Used only if OpenAI key is empty, or after OpenAI fails.</small>
+            </div>
+            <div class="field">
+              <label for="openaiBase">OpenAI base URL (optional)</label>
+              <input type="text" id="openaiBase" placeholder="https://api.openai.com/v1" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="openaiModel">OpenAI model (optional)</label>
+              <input type="text" id="openaiModel" placeholder="gpt-4o-mini" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="anthropicModel">Claude model (optional)</label>
+              <input type="text" id="anthropicModel" placeholder="claude-3-5-haiku-20241022" autocomplete="off" />
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <div id="meta" class="meta" hidden></div>
+      <div id="err" class="err" hidden></div>
+    </section>
+
+    <div class="results-head">
+      <h2>Results</h2>
+    </div>
     <ul id="results" class="results"></ul>
-  </main>
+
+    <footer class="site-ft">
+      <a href="https://github.com/wenjiewangwwj/unlgeoportalAI" target="_blank" rel="noopener">GitHub</a>
+      &middot;
+      <a href="https://geoportal.nead.nebraska.edu/portal/home/index.html" target="_blank" rel="noopener">UNL Geoportal</a>
+      &middot; Portal REST
+      <a href="https://developers.arcgis.com/rest/users-groups-and-items/search/" target="_blank" rel="noopener">search docs</a>
+    </footer>
+  </div>
 
   <script>
-    /**
-     * GitHub Pages: the API is on a different host, so set the public API origin here (no trailing slash).
-     * Example: "https://your-app.onrender.com"
-     * You can override per visit with ?api=https://your-api.example.com in the URL.
-     * Leave "" when this HTML is served from the same host as the FastAPI app (e.g. localhost:8000).
-     */
     const API_BASE = "";
 
     const $ = (id) => document.getElementById(id);
 
     function resolveApiBase() {
       const fromQuery = new URLSearchParams(window.location.search).get("api");
-      const raw = (fromQuery || API_BASE || "").trim().replace(/\/$/, "");
-      return raw;
+      return (fromQuery || API_BASE || "").trim().replace(/\/$/, "");
     }
 
     function apiSearchUrl() {
@@ -129,11 +418,28 @@
       if (onGithubPages && !base) {
         $("banner").hidden = false;
         $("banner").textContent =
-          "Set const API_BASE in index.html to your public FastAPI URL (no trailing slash), " +
-          "or open this page with ?api=https://your-api.example.com . " +
-          "Your API must allow this origin in CORS_ORIGINS.";
+          "Set const API_BASE in index.html to your public API URL, or add ?api=https://... to this page. CORS on the API must allow this origin.";
       }
     })();
+
+    function buildPayload(query) {
+      const payload = { query: query, num: 20, start: 1 };
+      const ok = $("openaiKey").value.trim();
+      if (ok) {
+        payload.user_openai_api_key = ok;
+        const b = $("openaiBase").value.trim();
+        const m = $("openaiModel").value.trim();
+        if (b) payload.user_openai_base_url = b;
+        if (m) payload.user_openai_model = m;
+      }
+      const ak = $("anthropicKey").value.trim();
+      if (ak) {
+        payload.user_anthropic_api_key = ak;
+        const cm = $("anthropicModel").value.trim();
+        if (cm) payload.user_anthropic_model = cm;
+      }
+      return payload;
+    }
 
     $("f").addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -149,7 +455,7 @@
         const r = await fetch(apiSearchUrl(), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query, num: 20, start: 1 }),
+          body: JSON.stringify(buildPayload(query)),
         });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) {
@@ -163,12 +469,29 @@
 
         const exp = data.expanded || {};
         const note = exp.user_note || "";
-        const pq = data.portal_q_used || "";
+        const pq = data.portal_q_used != null ? data.portal_q_used : data.portal_q_merged || "";
+        const pqPre = data.portal_q_merged && data.portal_q_merged !== pq
+          ? "<br><strong>Keywords (before group filter):</strong> <code>" + escapeHtml(String(data.portal_q_merged)) + "</code>"
+          : "";
+        const gid = data.portal_group_id;
+        const groupLine = gid
+          ? "<br><strong>Group filter:</strong> <code>" + escapeHtml(String(gid)) + "</code>"
+          : "";
+        const llmLine =
+          exp.llm_used === false
+            ? "<br><strong>LLM:</strong> off (direct Portal <code>q</code>)" +
+              (exp.llm_mode ? " — <code>" + escapeHtml(String(exp.llm_mode)) + "</code>" : "")
+            : exp.llm_mode
+              ? "<br><strong>LLM:</strong> <code>" + escapeHtml(String(exp.llm_mode)) + "</code>"
+              : "";
         $("meta").innerHTML =
-          "<strong>Portal query used:</strong> <code>" +
-          escapeHtml(pq) +
+          "<strong>Portal query sent:</strong> <code>" +
+          escapeHtml(String(pq)) +
           "</code>" +
-          (note ? "<br><strong>Note:</strong> " + escapeHtml(note) : "");
+          pqPre +
+          groupLine +
+          (note ? "<br><strong>Note:</strong> " + escapeHtml(note) : "") +
+          llmLine;
         $("meta").hidden = false;
 
         const pr = data.portal_response || {};
@@ -176,7 +499,8 @@
         const linkPrefix = data.item_html_id_prefix || "";
 
         if (!results.length) {
-          $("results").innerHTML = "<li class=\"result\">No items returned.</li>";
+          $("results").innerHTML =
+            "<li class=\"result\">No items returned for this query. Try different words or check group visibility in Portal.</li>";
           return;
         }
 
