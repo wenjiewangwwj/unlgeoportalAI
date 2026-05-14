@@ -10,12 +10,16 @@ from backend.config import settings
 SYSTEM_PROMPT = """You help users find datasets in an ArcGIS Portal catalog.
 Given a natural-language question, output a JSON object ONLY (no markdown) with:
 - "portal_q": a short search string for ArcGIS Portal /sharing/rest/search parameter q.
-  Use relevant synonyms (e.g. population, census, ACS, demographics). Under 220 characters.
-- "tags": array of 0 to 5 tag strings without "tags:" prefix, or empty array.
+-  Use relevant synonyms and broad dataset terms. Under 220 characters.
+- "portal_q_variants": array of 0 to 4 alternate search strings, ordered from broadest to most specific.
+- "tags": array of 0 to 3 broad tag-like keywords without "tags:" prefix, or empty array.
 - "user_note": one short sentence explaining what you search for (for the UI).
 
-ArcGIS q can combine words; optional filters look like tags:water or type:"Feature Service".
-Prefer plain keywords unless a filter clearly helps."""
+Rules:
+- Prefer broad keyword search terms over restrictive filters.
+- Avoid hard filters like tags:... unless you are confident they help.
+- Include common synonyms only when they broaden recall without becoming generic.
+- If the user asks for a topic like farmland, wetlands, roads, hydrology, population, or land cover, infer natural domain synonyms yourself instead of relying on hardcoded code rules."""
 
 HF_PUBLIC_MODELS = [
     "google/flan-t5-base",
@@ -96,6 +100,7 @@ def _parse_json_object(text: str) -> dict[str, Any]:
 def _passthrough(user_text: str, user_note: str, llm_mode: str = "none") -> dict[str, Any]:
     return {
         "portal_q": user_text,
+        "portal_q_variants": [],
         "tags": [],
         "user_note": user_note,
         "llm_used": False,
@@ -119,8 +124,14 @@ def _basic_keyword_cleanup(user_text: str) -> str:
 
     kept = [w for w in words if w.lower() not in _STOPWORDS]
     if kept:
-        return " ".join(kept).strip()
-    return " ".join(words).strip()
+        cleaned = " ".join(kept).strip()
+    else:
+        cleaned = " ".join(words).strip()
+    return cleaned
+
+
+def cleanup_query_keywords(user_text: str) -> str:
+    return _basic_keyword_cleanup(user_text)
 
 
 def _coerce_portal_q(text: str, fallback: str) -> str:
@@ -145,6 +156,10 @@ def _coerce_portal_q(text: str, fallback: str) -> str:
 
 def _normalize_llm_payload(data: dict[str, Any], llm_mode: str) -> dict[str, Any]:
     portal_q = str(data.get("portal_q", "")).strip()
+    portal_q_variants = data.get("portal_q_variants") or []
+    if not isinstance(portal_q_variants, list):
+        portal_q_variants = []
+    portal_q_variants = [str(t).strip() for t in portal_q_variants if str(t).strip()][:4]
     tags = data.get("tags") or []
     if not isinstance(tags, list):
         tags = []
@@ -152,6 +167,7 @@ def _normalize_llm_payload(data: dict[str, Any], llm_mode: str) -> dict[str, Any
     user_note = str(data.get("user_note", "")).strip()
     return {
         "portal_q": portal_q,
+        "portal_q_variants": portal_q_variants,
         "tags": tags,
         "user_note": user_note,
         "llm_used": True,
@@ -185,6 +201,7 @@ async def _try_hf_public_models(user_text: str) -> dict[str, Any] | None:
             if portal_q:
                 return {
                     "portal_q": portal_q,
+                    "portal_q_variants": [],
                     "tags": [],
                     "user_note": f"Hugging Face public model: {model}",
                     "llm_used": True,
@@ -196,6 +213,7 @@ async def _try_hf_public_models(user_text: str) -> dict[str, Any] | None:
     if fallback_q and fallback_q.lower() != user_text.strip().lower():
         return {
             "portal_q": fallback_q,
+            "portal_q_variants": [],
             "tags": [],
             "user_note": "Rule-based cleanup of your query; no LLM was available.",
             "llm_used": False,
@@ -258,6 +276,7 @@ async def _expand_from_server_env(user_text: str) -> dict[str, Any]:
         if cleaned and cleaned != user_text.strip():
             return {
                 "portal_q": cleaned,
+                "portal_q_variants": [],
                 "tags": [],
                 "user_note": "LLM disabled (LLM_PROVIDER=none). Using a rule-based keyword cleanup.",
                 "llm_used": False,

@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.config import settings
-from backend.llm_expand import expand_query_natural_language
+from backend.llm_expand import cleanup_query_keywords, expand_query_natural_language
 from backend.portal_search import apply_group_scope, merge_tags_into_q, portal_search
 
 
@@ -78,14 +78,60 @@ async def api_search(body: SearchRequest):
 
     portal_q = merge_tags_into_q(expanded.get("portal_q") or "", expanded.get("tags") or [])
     if not portal_q:
+        portal_q = cleanup_query_keywords(body.query)
+    if not portal_q:
         portal_q = body.query.strip()
 
-    portal_q_sent = apply_group_scope(portal_q)
+    candidate_queries: list[str] = [portal_q]
+    base_q = (expanded.get("portal_q") or "").strip()
+    if base_q and base_q not in candidate_queries:
+        candidate_queries.append(base_q)
+    for variant in expanded.get("portal_q_variants") or []:
+        variant_q = str(variant).strip()
+        if variant_q and variant_q not in candidate_queries:
+            candidate_queries.append(variant_q)
+    cleaned_q = cleanup_query_keywords(body.query)
+    if cleaned_q and cleaned_q not in candidate_queries:
+        candidate_queries.append(cleaned_q)
+    raw_q = body.query.strip()
+    if raw_q and raw_q not in candidate_queries:
+        candidate_queries.append(raw_q)
 
-    try:
-        raw = await portal_search(portal_q, num=body.num, start=body.start)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Portal search error: {e!s}") from e
+    raw = {}
+    portal_q_used = portal_q
+    search_attempts: list[dict[str, object]] = []
+    last_error: Exception | None = None
+    for idx, candidate in enumerate(candidate_queries):
+        attempt: dict[str, object] = {
+            "query": candidate,
+            "scoped_query": apply_group_scope(candidate),
+            "hit": False,
+            "result_count": 0,
+        }
+        try:
+            raw = await portal_search(candidate, num=body.num, start=body.start)
+            portal_q_used = candidate
+            results = raw.get("results") or []
+            total = raw.get("total")
+            result_count = len(results)
+            if isinstance(total, int) and total > result_count:
+                result_count = total
+            attempt["result_count"] = result_count
+            if results or (isinstance(total, int) and total > 0):
+                attempt["hit"] = True
+                search_attempts.append(attempt)
+                break
+            search_attempts.append(attempt)
+        except Exception as e:
+            attempt["error"] = str(e)
+            search_attempts.append(attempt)
+            last_error = e
+            if idx == len(candidate_queries) - 1:
+                raise HTTPException(status_code=502, detail=f"Portal search error: {e!s}") from e
+            continue
+    else:
+        if last_error is not None:
+            raise HTTPException(status_code=502, detail=f"Portal search error: {last_error!s}") from last_error
 
     if raw.get("error"):
         raise HTTPException(status_code=502, detail=str(raw.get("error")))
@@ -94,7 +140,8 @@ async def api_search(body: SearchRequest):
         "natural_language_query": body.query,
         "expanded": expanded,
         "portal_q_merged": portal_q,
-        "portal_q_used": portal_q_sent,
+        "portal_q_used": apply_group_scope(portal_q_used),
+        "search_attempts": search_attempts,
         "portal_group_id": (settings.portal_group_id or "").strip() or None,
         "item_html_id_prefix": item_html_id_prefix(),
         "portal_response": raw,

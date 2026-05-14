@@ -1,3 +1,4 @@
+import re
 from typing import Any
 from urllib.parse import urlencode
 
@@ -13,7 +14,7 @@ def apply_group_scope(q: str) -> str:
         return q.strip()
     base = q.strip()
     if base:
-        return f"{base} group:{gid}"
+        return f"({base}) group:{gid}" if (" OR " in base or " AND " in base) else f"{base} group:{gid}"
     return f"group:{gid}"
 
 
@@ -35,16 +36,58 @@ async def portal_search(q: str, num: int = 20, start: int = 1) -> dict[str, Any]
 
 
 def merge_tags_into_q(portal_q: str, tags: list[str]) -> str:
+    def clean_term(term: str) -> str:
+        term = term.strip()
+        term = term.removeprefix("tags:").removeprefix("tag:").strip()
+        term = term.strip("\"'")
+        return re.sub(r"\s+", " ", term)
+
+    def quote_term(term: str) -> str:
+        term = clean_term(term)
+        if not term:
+            return ""
+        if " " in term and not (term.startswith('"') and term.endswith('"')):
+            return f'"{term}"'
+        return term
+
+    def add_term(bucket: list[str], seen: set[str], term: str) -> None:
+        term = quote_term(term)
+        if not term:
+            return
+        key = term.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        bucket.append(term)
+
+    def expand_synonyms(text: str) -> list[str]:
+        lowered = text.lower()
+        extras: list[str] = []
+        if any(word in lowered for word in ("farmland", "agriculture", "cropland", "farming", "farm")):
+            extras.extend(["agriculture", "cropland", "land cover", "land use", "NLCD"])
+        if any(word in lowered for word in ("land cover", "landuse", "land use", "nlcd")):
+            extras.extend(["land cover", "land use", "NLCD"])
+        return extras
+
     parts: list[str] = []
-    base = portal_q.strip()
+    seen: set[str] = set()
+
+    base = clean_term(portal_q)
     if base:
-        parts.append(base)
+        add_term(parts, seen, base)
+        for extra in expand_synonyms(base):
+            add_term(parts, seen, extra)
+
     for t in tags:
-        t = t.strip()
+        t = clean_term(t)
         if not t:
             continue
-        if t.lower().startswith("tags:"):
-            parts.append(t)
-        else:
-            parts.append(f"tags:{t}")
-    return " ".join(parts).strip()
+        add_term(parts, seen, t)
+        for extra in expand_synonyms(t):
+            add_term(parts, seen, extra)
+
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return "(" + " OR ".join(parts) + ")"
