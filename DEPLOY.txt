@@ -21,21 +21,20 @@ HOW TO DEPLOY ON RENDER (WEB SERVICE)
   6. **Environment** (Render dashboard → Environment):
        PORTAL_SHARING_REST=https://geoportal.nead.nebraska.edu/portal/sharing/rest
        LLM_PROVIDER=auto
-       # Optional: set GEMINI_API_KEY only if you want Gemini instead of Hugging Face
+       # Optional: set GEMINI_API_KEY only if you want Gemini instead of the default Hugging Face fallback
        # GEMINI_API_KEY=(from https://aistudio.google.com/apikey )
        # GEMINI_MODEL=gemini-2.0-flash
        CORS_ORIGINS=https://wenjiewangwwj.github.io,http://127.0.0.1:5500
      Add PORTAL_TOKEN only if you need private items. Use your real GitHub
      Pages origin (project site is often https://USER.github.io/REPO — CORS
      uses origin without path, e.g. https://USER.github.io for user sites).
-     For Hugging Face natural-language search, add a token in ONE of these
-     environment variables:
+     Hugging Face public inference is tried automatically when `LLM_PROVIDER=auto`.
+     If you want authenticated Hugging Face access or a higher free-tier limit,
+     add a token in one of these variables:
        HUGGINGFACE_API_KEY
        HF_TOKEN
-       HUGGINGFACEHUB_API_TOKEN
-     The backend will use Hugging Face first when `LLM_PROVIDER=auto` and a
-     Hugging Face token is present. If no LLM is configured, the app falls
-     back to plain Portal keyword search.
+     If no LLM is configured or the model call fails, the app falls back to
+     rule-based keyword cleanup and then plain Portal search.
   7. Create Web Service and wait for the deploy log. Open the URL Render shows
      and test: https://YOUR-SERVICE.onrender.com/health
 

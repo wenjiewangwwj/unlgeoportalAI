@@ -9,7 +9,7 @@ Repository: [wenjiewangwwj/unlgeoportalAI](https://github.com/wenjiewangwwj/unlg
 1. The user types a question (for example, “population near Lincoln”).
 2. **Optional AI expansion** (first match wins):
    - **Bring your own key (browser → this API):** if the user pastes an **OpenAI** or **Anthropic (Claude)** API key in the UI, that provider is used to produce a short JSON plan (`portal_q`, optional `tags`, `user_note`).
-   - **Otherwise (server-side):** if the host has `GEMINI_API_KEY` and/or a Hugging Face token (`HUGGINGFACE_API_KEY`, `HF_TOKEN`, or `HUGGINGFACEHUB_API_TOKEN`), those are tried according to `LLM_PROVIDER` (default **`auto`**). If nothing is configured, the app **still works**: it sends the user’s text to Portal search as-is (no 502 error).
+   - **Otherwise (server-side):** if the host has `GEMINI_API_KEY`, the app can use Gemini; otherwise it tries Hugging Face’s public Inference API fallback chain first, then keeps working with rule-based cleanup or plain Portal search if needed.
 3. The service builds a Portal search string. **Group scope:** when `PORTAL_GROUP_ID` is set on the server, the final `q` sent to Portal always includes `group:<id>` so results are limited to items shared with that group (for example the UNL Geoportal group `cdfaf0b822344c7792b688998094b1f0`). Clear `PORTAL_GROUP_ID` to search the whole portal.
 4. The browser shows Portal item titles with links back to `.../home/item.html?id=...`.
 
@@ -34,9 +34,8 @@ Repository: [wenjiewangwwj/unlgeoportalAI](https://github.com/wenjiewangwwj/unlg
    - **`PORTAL_SHARING_REST`** — Sharing REST root, e.g. `https://geoportal.nead.nebraska.edu/portal/sharing/rest`
    - **`PORTAL_GROUP_ID`** — optional; set to your Portal group GUID to restrict results
    - **`CORS_ORIGINS`** — include your GitHub Pages origin (e.g. `https://youruser.github.io`) if the UI is hosted there
-   - **`LLM_PROVIDER=auto`** and optional **`GEMINI_API_KEY`** / **`HUGGINGFACE_API_KEY`** / **`HF_TOKEN`**
-   - For Hugging Face natural-language expansion, set **one** of these on the server: `HUGGINGFACE_API_KEY`, `HF_TOKEN`, or `HUGGINGFACEHUB_API_TOKEN`
-   - If you want the app to use Hugging Face without any browser-entered key, add the token only in the Render environment variables, not in the UI
+   - **`LLM_PROVIDER=auto`** and optional **`GEMINI_API_KEY`**
+   - Hugging Face does not require a token for the public inference fallback, but you may set `HUGGINGFACE_API_KEY` or `HF_TOKEN` to improve rate limits
 
 ## Host the UI (GitHub Pages or same origin)
 
@@ -49,7 +48,7 @@ The UI has an optional section **“Bring your own model”**:
 
 - **OpenAI:** API key + optional base URL (defaults to `https://api.openai.com/v1` for OpenAI, or use another OpenAI-compatible endpoint) + model (default `gpt-4o-mini`).
 - **Claude (Anthropic):** API key + model (default `claude-3-5-haiku-20241022`).
-- **Server-side Hugging Face:** no UI input is needed if the backend has a Hugging Face token configured. That is the default path for natural-language expansion when `LLM_PROVIDER=auto` and no Gemini key is set.
+- **Server-side Hugging Face:** no UI input is needed. The backend can try Hugging Face public inference models automatically when `LLM_PROVIDER=auto`.
 
 ### Hugging Face deployment checklist
 
@@ -57,11 +56,11 @@ If you want natural-language search to work out of the box on Render:
 
 1. Open your Render Web Service.
 2. Go to **Environment**.
-3. Add a Hugging Face token in **one** of these variables: `HUGGINGFACE_API_KEY`, `HF_TOKEN`, or `HUGGINGFACEHUB_API_TOKEN`.
-4. Leave `LLM_PROVIDER=auto` unless you want to force a different backend.
+3. Leave `LLM_PROVIDER=auto` unless you want to force a different backend.
+4. Optionally add `HUGGINGFACE_API_KEY` or `HF_TOKEN` if you want authenticated Hugging Face access.
 5. Redeploy the service.
 
-When this is set, users can type normal questions like “population near Lincoln” and the backend will try Hugging Face first, then fall back to plain Portal keyword search if the model call fails.
+When this is set, users can type normal questions like “population near Lincoln” and the backend will try Hugging Face public inference first, then fall back to rule-based cleanup or plain Portal keyword search if the model call fails.
 
 **Security note:** keys are sent to **this backend** over HTTPS on each search. They are **not** intended to be stored server-side by this app, but anyone operating the server could misconfigure logging. Do **not** use production secrets on a shared demo host you do not control. Prefer **server-side** keys in environment variables for production, or run your own deployment.
 
