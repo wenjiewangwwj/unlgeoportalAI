@@ -242,6 +242,34 @@
       word-break: break-all;
       font-size: 0.82em;
     }
+    .attempts-list {
+      margin: 0.6rem 0 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 0.45rem;
+    }
+    .attempt-item {
+      padding: 0.55rem 0.7rem;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .attempt-item.winner {
+      border-color: rgba(94, 224, 160, 0.35);
+      background: rgba(94, 224, 160, 0.08);
+    }
+    .attempt-item .label {
+      display: inline-block;
+      margin-bottom: 0.25rem;
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .attempt-item.winner .label {
+      color: var(--ok);
+    }
     .err {
       margin-top: 1rem;
       padding: 0.85rem 1rem;
@@ -379,6 +407,7 @@
       </details>
 
       <div id="meta" class="meta" hidden></div>
+      <div id="attempts" class="meta" hidden></div>
       <div id="err" class="err" hidden></div>
     </section>
 
@@ -493,6 +522,35 @@
           (note ? "<br><strong>Note:</strong> " + escapeHtml(note) : "") +
           llmLine;
         $("meta").hidden = false;
+
+        const attempts = Array.isArray(data.search_attempts) ? data.search_attempts : [];
+        if (attempts.length) {
+          const attemptedHtml = attempts.map((a, idx) => {
+            const isWinner = Boolean(a.hit);
+            const query = escapeHtml(String(a.query || ""));
+            const scoped = escapeHtml(String(a.scoped_query || ""));
+            const count = Number.isFinite(Number(a.result_count)) ? Number(a.result_count) : 0;
+            const error = a.error ? "<br><strong>Error:</strong> " + escapeHtml(String(a.error)) : "";
+            return (
+              "<li class=\"attempt-item" + (isWinner ? " winner" : "") + "\">" +
+              "<span class=\"label\">" + (isWinner ? "Winning variant" : "Tried variant " + (idx + 1)) + "</span>" +
+              "<div><strong>Query:</strong> <code>" + query + "</code></div>" +
+              "<div><strong>Scoped:</strong> <code>" + scoped + "</code></div>" +
+              "<div><strong>Hits:</strong> " + count + (isWinner ? " (selected)" : "") + "</div>" +
+              error +
+              "</li>"
+            );
+          }).join("");
+          $("attempts").innerHTML =
+            "<strong>Query variants tried</strong>" +
+            "<ul class=\"attempts-list\">" +
+            attemptedHtml +
+            "</ul>";
+          $("attempts").hidden = false;
+        } else {
+          $("attempts").hidden = true;
+          $("attempts").innerHTML = "";
+        }
 
         const pr = data.portal_response || {};
         const results = pr.results || [];
