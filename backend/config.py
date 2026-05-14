@@ -1,3 +1,4 @@
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,8 +17,13 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
 
-    huggingface_api_key: str = ""
-    huggingface_model: str = "meta-llama/Llama-3.2-1B-Instruct"
+    # Accept the common Hugging Face env names so deployment can use either one.
+    huggingface_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("HUGGINGFACE_API_KEY", "HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN"),
+    )
+    # A public instruction-tuned model works better for query expansion than a gated chat model.
+    huggingface_model: str = "google/gemma-2-2b-it"
     huggingface_router_url: str = "https://router.huggingface.co/v1"
 
     ollama_base_url: str = "http://127.0.0.1:11434"
