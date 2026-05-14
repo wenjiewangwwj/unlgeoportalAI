@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # Leave empty to search the whole portal catalog.
     portal_group_id: str = "cdfaf0b822344c7792b688998094b1f0"
 
-    # auto = try Gemini if key set, else Hugging Face router, else plain Portal search (no LLM).
+    # auto = try Hugging Face public inference, then Gemini if key set, then other fallbacks.
     # none = never call an LLM. gemini | huggingface | ollama | openai_compatible = force that path (with fallback where noted).
     llm_provider: str = "auto"
     gemini_api_key: str = ""
@@ -22,7 +22,7 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("HUGGINGFACE_API_KEY", "HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN"),
     )
-    # A public instruction-tuned model works better for query expansion than a gated chat model.
+    # Used for the explicit Hugging Face router/chat-completions path or when a token is present.
     huggingface_model: str = "google/gemma-2-2b-it"
     huggingface_router_url: str = "https://router.huggingface.co/v1"
 

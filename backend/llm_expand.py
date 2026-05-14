@@ -17,6 +17,73 @@ Given a natural-language question, output a JSON object ONLY (no markdown) with:
 ArcGIS q can combine words; optional filters look like tags:water or type:"Feature Service".
 Prefer plain keywords unless a filter clearly helps."""
 
+HF_PUBLIC_MODELS = [
+    "google/flan-t5-base",
+    "microsoft/DialoGPT-medium",
+    "facebook/blenderbot-400M-distill",
+    "microsoft/DialoGPT-small",
+    "gpt2",
+]
+
+HF_PUBLIC_PROMPT = """Rewrite the user's request into a short ArcGIS Portal search query.
+Return only the search keywords, no explanation, no bullet points, and no markdown.
+Prefer concise dataset/search terms and useful synonyms.
+
+User request:
+{user_text}
+
+Search query:"""
+
+_FILLER_PREFIXES = (
+    "i am interested in ",
+    "i'm interested in ",
+    "i want ",
+    "i need ",
+    "i am looking for ",
+    "i'm looking for ",
+    "show me ",
+    "find ",
+    "please show me ",
+    "please find ",
+    "can you show me ",
+    "can you find ",
+    "tell me about ",
+    "what is ",
+    "information about ",
+    "data about ",
+)
+
+_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "about",
+    "around",
+    "can",
+    "data",
+    "dataset",
+    "datasets",
+    "find",
+    "for",
+    "get",
+    "i",
+    "in",
+    "interested",
+    "is",
+    "me",
+    "need",
+    "of",
+    "on",
+    "please",
+    "show",
+    "tell",
+    "the",
+    "to",
+    "want",
+    "what",
+    "you",
+}
+
 
 def _parse_json_object(text: str) -> dict[str, Any]:
     text = text.strip()
@@ -34,6 +101,46 @@ def _passthrough(user_text: str, user_note: str, llm_mode: str = "none") -> dict
         "llm_used": False,
         "llm_mode": llm_mode,
     }
+
+
+def _basic_keyword_cleanup(user_text: str) -> str:
+    text = user_text.strip()
+    lowered = text.lower()
+    for prefix in _FILLER_PREFIXES:
+        if lowered.startswith(prefix):
+            text = text[len(prefix) :]
+            lowered = text.lower()
+            break
+    text = re.sub(r"^\s*(?:please|kindly)\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip(" ,.;:-")
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'/-]*", text)
+    if not words:
+        return user_text.strip()
+
+    kept = [w for w in words if w.lower() not in _STOPWORDS]
+    if kept:
+        return " ".join(kept).strip()
+    return " ".join(words).strip()
+
+
+def _coerce_portal_q(text: str, fallback: str) -> str:
+    candidate = text.strip()
+    if not candidate:
+        return fallback
+    candidate = re.sub(r"(?i)^(search query|query|keywords?|portal q)\s*[:\-]\s*", "", candidate).strip()
+    candidate = candidate.splitlines()[0].strip(" `\"'.,;:-")
+    candidate = re.sub(r"\s+", " ", candidate).strip()
+    if not candidate:
+        return fallback
+
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'/-]*", candidate)
+    if not words:
+        return fallback
+
+    stopword_ratio = sum(1 for w in words if w.lower() in _STOPWORDS) / max(len(words), 1)
+    if len(words) > 12 or stopword_ratio > 0.55:
+        return fallback
+    return candidate[:220].strip()
 
 
 def _normalize_llm_payload(data: dict[str, Any], llm_mode: str) -> dict[str, Any]:
@@ -64,6 +171,37 @@ async def _try_llm_json(llm_mode: str, fetch_text: Callable[[], Awaitable[str]])
         return out
     except Exception:
         return None
+
+
+async def _try_hf_public_models(user_text: str) -> dict[str, Any] | None:
+    fallback_q = _basic_keyword_cleanup(user_text)
+    prompt = HF_PUBLIC_PROMPT.format(user_text=user_text)
+    token = settings.huggingface_api_key.strip()
+
+    for model in HF_PUBLIC_MODELS:
+        try:
+            raw = await _huggingface_public_infer(model, prompt, token=token)
+            portal_q = _coerce_portal_q(raw, fallback_q)
+            if portal_q:
+                return {
+                    "portal_q": portal_q,
+                    "tags": [],
+                    "user_note": f"Hugging Face public model: {model}",
+                    "llm_used": True,
+                    "llm_mode": f"huggingface_public:{model}",
+                }
+        except Exception:
+            continue
+
+    if fallback_q and fallback_q.lower() != user_text.strip().lower():
+        return {
+            "portal_q": fallback_q,
+            "tags": [],
+            "user_note": "Rule-based cleanup of your query; no LLM was available.",
+            "llm_used": False,
+            "llm_mode": "rule_based",
+        }
+    return None
 
 
 async def expand_query_natural_language(
@@ -116,9 +254,21 @@ async def _expand_from_server_env(user_text: str) -> dict[str, Any]:
     prov = settings.llm_provider.lower().strip()
 
     if prov in ("none", "off", "disabled"):
+        cleaned = _basic_keyword_cleanup(user_text)
+        if cleaned and cleaned != user_text.strip():
+            return {
+                "portal_q": cleaned,
+                "tags": [],
+                "user_note": "LLM disabled (LLM_PROVIDER=none). Using a rule-based keyword cleanup.",
+                "llm_used": False,
+                "llm_mode": "rule_based",
+            }
         return _passthrough(user_text, "LLM disabled (LLM_PROVIDER=none). Portal search uses your words as-is.", "none")
 
     if prov == "auto":
+        out = await _try_hf_public_models(user_text)
+        if out:
+            return out
         if settings.gemini_api_key.strip():
             out = await _try_llm_json("gemini", lambda: _gemini_chat(user_text))
             if out:
@@ -127,9 +277,9 @@ async def _expand_from_server_env(user_text: str) -> dict[str, Any]:
         if out:
             return out
         return _passthrough(
-            user_text,
-            "No server LLM: add GEMINI_API_KEY and/or HUGGINGFACE_API_KEY on the host, or use 'Bring your own key' in the UI.",
-            "none",
+            _basic_keyword_cleanup(user_text),
+            "No server LLM was available; using a cleaned keyword search string.",
+            "rule_based",
         )
 
     if prov == "gemini":
@@ -147,11 +297,14 @@ async def _expand_from_server_env(user_text: str) -> dict[str, Any]:
         )
 
     if prov in ("huggingface", "hf"):
+        out = await _try_hf_public_models(user_text)
+        if out:
+            return out
         out = await _try_llm_json("huggingface", lambda: _huggingface_chat(user_text))
         return out or _passthrough(
-            user_text,
-            "Hugging Face chat failed or needs HUGGINGFACE_API_KEY. Searching with your text as-is.",
-            "none",
+            _basic_keyword_cleanup(user_text),
+            "Hugging Face chat failed; using a cleaned keyword search string.",
+            "rule_based",
         )
 
     if prov == "ollama":
@@ -177,9 +330,9 @@ async def _expand_from_server_env(user_text: str) -> dict[str, Any]:
         )
 
     return _passthrough(
-        user_text,
-        f"Unknown LLM_PROVIDER={settings.llm_provider!r}; searching with your text as-is.",
-        "none",
+        _basic_keyword_cleanup(user_text),
+        f"Unknown LLM_PROVIDER={settings.llm_provider!r}; using a cleaned keyword search string.",
+        "rule_based",
     )
 
 
@@ -362,3 +515,45 @@ async def _openai_compatible_chat(user_text: str) -> str:
         return ""
     msg = choices[0].get("message") or {}
     return msg.get("content") or ""
+
+
+async def _huggingface_public_infer(model: str, prompt: str, token: str = "") -> str:
+    url = f"https://api-inference.huggingface.co/models/{model}"
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 64,
+            "return_full_text": False,
+            "temperature": 0.2,
+            "do_sample": True,
+        },
+        "options": {"wait_for_model": True},
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(url, headers=headers, json=payload)
+        if r.status_code >= 400:
+            try:
+                err = r.json()
+            except Exception:
+                err = {"raw": r.text[:500]}
+            raise ValueError(f"Hugging Face Inference API HTTP {r.status_code}: {err}")
+        body = r.json()
+
+    if isinstance(body, list):
+        for item in body:
+            if isinstance(item, dict):
+                for key in ("generated_text", "summary_text", "text"):
+                    value = item.get(key)
+                    if value:
+                        return str(value).strip()
+    if isinstance(body, dict):
+        if body.get("error"):
+            raise ValueError(f"Hugging Face error: {body['error']}")
+        for key in ("generated_text", "summary_text", "text"):
+            value = body.get(key)
+            if value:
+                return str(value).strip()
+    return ""
